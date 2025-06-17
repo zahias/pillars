@@ -1,12 +1,13 @@
 # streamlit_app.py
+
 import streamlit as st
 from db import init_db
-from pages import (
-    parameters as parameters_page,
-    programs as programs_page,
-    pillars_indicators as pi_page,
-    activities as activities_page,
-)
+
+# ← Correct imports from your pages folder
+from pages.parameters        import parameters_page
+from pages.programs          import programs_page
+from pages.pillars_indicators import pillars_indicators_page
+from pages.activities        import activities_page
 
 # ── Must be first ──────────────────────────────────────────────────────────
 st.set_page_config(page_title="Pillars Tracker", layout="wide")
@@ -20,14 +21,15 @@ def main():
         "Pillars & Indicators",
         "Activities"
     ])
+
     if choice == "Parameters":
-        parameters_page.parameters_page()
+        parameters_page()
     elif choice == "Programs":
-        programs_page.programs_page()
+        programs_page()
     elif choice == "Pillars & Indicators":
-        pi_page.pillars_indicators_page()
+        pillars_indicators_page()
     else:
-        activities_page.activities_page()
+        activities_page()
 
 if __name__ == "__main__":
     main()
