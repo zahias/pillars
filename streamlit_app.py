@@ -3,102 +3,106 @@ import pandas as pd
 import io
 import altair as alt
 
-st.set_page_config(page_title="Pillars Tracker", layout="wide")
+st.set_page_config(page_title="Pillars & Programs Tracker", layout="wide")
+st.title("Pillars & Programs Tracker")
 
-# Initialize session state for the Excel data
+# ---- Upload & Load Excel ----
+uploaded_file = st.file_uploader("Upload your Pillars Excel file", type=["xlsx"])
+if not uploaded_file:
+    st.info("Please upload an Excel file to get started.")
+    st.stop()
+
+@st.cache_data(show_spinner=False)
+def load_excel(file) -> dict:
+    xls = pd.ExcelFile(file)
+    return {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
+
 if "excel_data" not in st.session_state:
-    st.session_state.excel_data = {}
+    st.session_state.excel_data = load_excel(uploaded_file)
 
-st.title("Program Pillars Tracker")
+# ---- Main Tabs ----
+tab1, tab2 = st.tabs(["Configuration & Data", "Reporting"])
 
-# Sidebar: upload or download current config
-with st.sidebar:
-    st.header("Configuration File")
-    uploaded = st.file_uploader("Upload Excel config/data file", type=["xlsx"], key="uploader")
-    if uploaded is not None:
-        try:
-            st.session_state.excel_data = pd.read_excel(uploaded, sheet_name=None)
-            st.success("Loaded Excel file with sheets: {}".format(
-                ", ".join(st.session_state.excel_data.keys())
-            ))
-        except Exception as e:
-            st.error(f"Error reading Excel file: {e}")
-    elif not st.session_state.excel_data:
-        st.info("Please upload a configuration Excel file.")
-
-    if st.session_state.excel_data:
-        # Offer download of current state
-        towrite = io.BytesIO()
-        with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-            for sheet, df in st.session_state.excel_data.items():
-                df.to_excel(writer, sheet_name=sheet, index=False)
-            writer.save()
-            towrite.seek(0)
-        st.download_button(
-            label="Download updated Excel",
-            data=towrite,
-            file_name="updated_pillars_tracker.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-# Main app once data is loaded
-if st.session_state.excel_data:
-    tabs = st.tabs(["Configuration", "Data", "Reporting"])
-
-    # Configuration tab: edit all sheets
-    with tabs[0]:
-        st.header("Configuration Editor")
-        st.write("Edit any sheet values. Changes will persist until you download the updated file.")
-        for sheet_name, df in st.session_state.excel_data.items():
-            with st.expander(f"Edit Sheet: {sheet_name}", expanded=False):
-                edited_df = st.data_editor(df, use_container_width=True)
-                st.session_state.excel_data[sheet_name] = edited_df
-
-    # Data tab: specifically Activities or user-chosen
-    with tabs[1]:
-        st.header("Data Editor")
-        sheet_list = list(st.session_state.excel_data.keys())
-        data_sheet = st.selectbox("Select data sheet for activities/logs", sheet_list)
-        df_data = st.session_state.excel_data[data_sheet]
-        edited_data = st.data_editor(df_data, use_container_width=True)
-        st.session_state.excel_data[data_sheet] = edited_data
-
-    # Reporting tab
-    with tabs[2]:
-        st.header("Reporting & Visualization")
-        st.write("Select sheet and fields to generate summary charts and tables.")
-        sheet_for_report = st.selectbox("Sheet for reporting", list(st.session_state.excel_data.keys()))
-        df_report = st.session_state.excel_data[sheet_for_report]
-        if not df_report.empty:
-            st.markdown("---")
-            st.subheader("Pivot Table")
-            cols = df_report.columns.tolist()
-            row_dim = st.selectbox("Rows", cols, index=0)
-            col_dim = st.selectbox("Columns", cols, index=1)
-            val_field = st.selectbox("Values (numeric)", [c for c in cols if pd.api.types.is_numeric_dtype(df_report[c])], index=0)
-            agg_func = st.selectbox("Aggregation", ["sum", "mean", "count"], index=0)
-
-            pivot = pd.pivot_table(
-                df_report,
-                values=val_field,
-                index=[row_dim],
-                columns=[col_dim],
-                aggfunc=agg_func,
-                fill_value=0,
+with tab1:
+    st.header("🔧 Configuration & Data")
+    st.markdown(
+        """
+        - Edit any sheet by expanding it below.  
+        - Changes are stored in-session automatically.  
+        - When you’re done, use the button at the bottom to download your updated workbook.
+        """
+    )
+    # Show each sheet in an expander with a data editor
+    for sheet_name, df in st.session_state.excel_data.items():
+        with st.expander(sheet_name, expanded=False):
+            edited_df = st.data_editor(
+                df,
+                key=sheet_name,
+                num_rows="dynamic",
+                use_container_width=True
             )
-            st.dataframe(pivot)
+            # Persist edits
+            st.session_state.excel_data[sheet_name] = edited_df
 
-            st.subheader("Chart")
-            pivot_reset = pivot.reset_index().melt(id_vars=row_dim)
-            chart = alt.Chart(pivot_reset).mark_bar().encode(
-                x=row_dim,
-                y='value:Q',
-                color='variable:N',
-                tooltip=[row_dim, 'variable', 'value'],
-            ).properties(width=700, height=400)
+    # Download button
+    towrite = io.BytesIO()
+    with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+        for sheet, df in st.session_state.excel_data.items():
+            df.to_excel(writer, sheet_name=sheet, index=False)
+    # No writer.save() needed
+    towrite.seek(0)
+    st.download_button(
+        label="💾 Download Updated Excel",
+        data=towrite,
+        file_name="pillars_data_updated.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+with tab2:
+    st.header("📊 Reporting")
+    st.markdown(
+        """
+        Generate pivot summaries and bar charts for any numeric indicator.
+        """
+    )
+
+    sheet = st.selectbox("Choose sheet", list(st.session_state.excel_data.keys()))
+    df_report = st.session_state.excel_data[sheet]
+
+    # Identify numeric columns
+    numeric_cols = df_report.select_dtypes(include="number").columns.tolist()
+    if not numeric_cols:
+        st.warning(f"No numeric columns found in **{sheet}** for reporting.")
+    else:
+        num_col = st.selectbox("Numeric field to summarize", numeric_cols)
+        # Allow grouping
+        groupable = [c for c in df_report.columns if c != num_col]
+        group_cols = st.multiselect("Group by (optional)", groupable)
+
+        if st.button("▶️ Generate Report"):
+            # Build pivot
+            if group_cols:
+                pivot = df_report.groupby(group_cols)[num_col].sum().reset_index()
+            else:
+                pivot = pd.DataFrame({num_col: [df_report[num_col].sum()]})
+
+            st.subheader("Pivot Table")
+            st.dataframe(pivot, use_container_width=True)
+
+            st.subheader("Bar Chart")
+            if group_cols:
+                x_enc = alt.X(group_cols[0], type="nominal", axis=alt.Axis(labelAngle=-45))
+            else:
+                x_enc = alt.X(num_col, type="nominal")
+
+            chart = (
+                alt.Chart(pivot)
+                .mark_bar()
+                .encode(
+                    x=x_enc,
+                    y=alt.Y(num_col, type="quantitative"),
+                    tooltip=group_cols + [num_col],
+                )
+                .properties(width="container", height=400)
+            )
             st.altair_chart(chart, use_container_width=True)
-        else:
-            st.info("The selected sheet is empty.")
-
-else:
-    st.write("Upload a valid Excel file to get started.")
