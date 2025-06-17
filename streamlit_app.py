@@ -1,11 +1,11 @@
 import streamlit as st
 from db import init_db
-from pages.parameters        import parameters_page
-from pages.programs          import programs_page
+from pages.parameters         import parameters_page
+from pages.programs           import programs_page
 from pages.pillars_indicators import pillars_indicators_page
-from pages.activities        import activities_page
+from pages.activities         import activities_page
 
-# ── Must be the first Streamlit command ────────────────────────────────────
+# Must be the first Streamlit command
 st.set_page_config(page_title="Pillars Tracker", layout="wide")
 
 def main():

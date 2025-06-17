@@ -10,7 +10,8 @@ def get_db_conn():
 def init_db():
     conn = get_db_conn()
     c = conn.cursor()
-    # core tables
+
+    # Core tables
     c.executescript("""
     CREATE TABLE IF NOT EXISTS programs (
       program_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +45,8 @@ def init_db():
       FOREIGN KEY(indicator_id) REFERENCES indicators(indicator_id)
     );
     """)
-    # dynamic-detail schema (fields, entries, values)
+
+    # Dynamic-detail schema
     c.executescript("""
     CREATE TABLE IF NOT EXISTS detail_fields (
       field_id     INTEGER PRIMARY KEY AUTOINCREMENT,

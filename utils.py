@@ -1,4 +1,3 @@
-# utils.py
 import pandas as pd
 from io import BytesIO
 from db import get_db_conn
@@ -7,6 +6,7 @@ def load_sheets():
     """Read all parameter tables into DataFrames."""
     conn = get_db_conn()
     dfs = {}
+
     dfs["Programs"] = pd.read_sql("SELECT name,description FROM programs", conn)
     dfs["Pillars"]  = pd.read_sql("SELECT name,description FROM pillars", conn)
     dfs["Indicators"] = pd.read_sql(
@@ -32,7 +32,7 @@ def load_sheets():
     )
     return dfs
 
-def to_excel_workbook(dfs: dict[str,pd.DataFrame]) -> bytes:
+def to_excel_workbook(dfs: dict[str, pd.DataFrame]) -> bytes:
     """Write a dict of DataFrames to an in-memory .xlsx and return bytes."""
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
