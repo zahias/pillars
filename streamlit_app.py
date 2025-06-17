@@ -48,13 +48,16 @@ def manage_pillars_and_indicators():
     new_desc = st.text_area("Description", key="new_pillar_desc")
     if st.button("➕ Create pillar"):
         now = datetime.utcnow().isoformat()
-        c.execute(
-            "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
-            (new_name, new_desc, now, now)
-        )
-        conn.commit()
-        st.success(f"Added pillar » {new_name}")
-        st.rerun()
+        try:
+            c.execute(
+                "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
+                (new_name, new_desc, now, now)
+            )
+            conn.commit()
+            st.success(f"Added pillar » {new_name}")
+            st.rerun()
+        except sqlite3.IntegrityError:
+            st.error(f"A pillar named '{new_name}' already exists. Please choose a different name.")
 
     # ── List & edit existing ─────────────────────────────────────────────────
     st.subheader("Existing pillars")
@@ -84,13 +87,16 @@ def manage_pillars_and_indicators():
 
             if st.button("💾 Save changes", key=f"save_pill_{p['pillar_id']}"):
                 now = datetime.utcnow().isoformat()
-                c.execute(
-                    "UPDATE pillars SET name=?,description=?,updated_at=? WHERE pillar_id=?",
-                    (updated_name, updated_desc, now, p["pillar_id"])
-                )
-                conn.commit()
-                st.success("Pillar updated.")
-                st.rerun()
+                try:
+                    c.execute(
+                        "UPDATE pillars SET name=?,description=?,updated_at=? WHERE pillar_id=?",
+                        (updated_name, updated_desc, now, p["pillar_id"])
+                    )
+                    conn.commit()
+                    st.success("Pillar updated.")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error(f"A pillar named '{updated_name}' already exists. Choose a different name.")
 
             # ── Inline “Add new indicator” form ───────────────────────────────
             st.markdown("#### ➕ Add new indicator")
