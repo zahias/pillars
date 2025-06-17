@@ -4,7 +4,7 @@ from datetime import datetime
 
 # ── Database helpers ──────────────────────────────────────────────────────
 
-@st.experimental_singleton
+@st.cache(allow_output_mutation=True)
 def get_db_conn():
     conn = sqlite3.connect("pillars.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -58,7 +58,7 @@ def manage_pillars_and_indicators():
             st.experimental_rerun()
 
     for p in pillars:
-        with st.expander(f"{p['name']}", expanded=False):
+        with st.expander(f"{p['name']}"):
             # Edit/Delete Pillar
             col1, col2 = st.columns([3,1])
             with col1:
@@ -88,7 +88,7 @@ def manage_pillars_and_indicators():
                 (p["pillar_id"],)
             ).fetchall()
 
-            with st.expander("Add new indicator", expanded=False):
+            with st.expander("Add new indicator"):
                 ind_name = st.text_input("Indicator name", key=f"new_ind_name_{p['pillar_id']}")
                 ind_goal = st.number_input("Goal (numeric)", min_value=0, step=1, key=f"new_ind_goal_{p['pillar_id']}")
                 if st.button("➕ Create indicator", key=f"create_ind_{p['pillar_id']}"):
