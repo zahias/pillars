@@ -2,6 +2,7 @@
 
 import streamlit as st
 import sqlite3
+import pandas as pd
 from datetime import datetime
 
 # ── MUST be the very first Streamlit command ────────────────────────────────
@@ -18,6 +19,13 @@ def init_db():
     conn = get_db_conn()
     c = conn.cursor()
     c.executescript("""
+    CREATE TABLE IF NOT EXISTS programs (
+      program_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+      name         TEXT NOT NULL UNIQUE,
+      description  TEXT,
+      created_at   TEXT,
+      updated_at   TEXT
+    );
     CREATE TABLE IF NOT EXISTS pillars (
       pillar_id    INTEGER PRIMARY KEY AUTOINCREMENT,
       name         TEXT NOT NULL UNIQUE,
@@ -34,141 +42,168 @@ def init_db():
       updated_at   TEXT,
       FOREIGN KEY(pillar_id) REFERENCES pillars(pillar_id)
     );
+    CREATE TABLE IF NOT EXISTS activities (
+      activity_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+      indicator_id INTEGER NOT NULL,
+      name         TEXT NOT NULL,
+      created_at   TEXT,
+      updated_at   TEXT,
+      FOREIGN KEY(indicator_id) REFERENCES indicators(indicator_id)
+    );
+    CREATE TABLE IF NOT EXISTS activity_details (
+      detail_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id    INTEGER NOT NULL,
+      year           INTEGER,
+      quarter        TEXT,
+      program_id     INTEGER,
+      status         TEXT,
+      trigger        TEXT,
+      organization   TEXT,
+      contact_person TEXT,
+      position       TEXT,
+      contact_info   TEXT,
+      objective      TEXT,
+      final_outcome  TEXT,
+      comments       TEXT,
+      created_at     TEXT,
+      FOREIGN KEY(activity_id)  REFERENCES activities(activity_id),
+      FOREIGN KEY(program_id)   REFERENCES programs(program_id)
+    );
     """)
     conn.commit()
 
-def manage_pillars_and_indicators():
-    st.header("🏛️ Pillars & Indicators")
+# ── Page: Import Parameters ─────────────────────────────────────────────────
+def import_parameters():
+    st.header("🔄 Import Parameters from Excel")
+    st.markdown(
+        """
+Upload a **.xlsx** file with sheets **Programs**, **Pillars**, **Indicators**, and **Activities**.
+Each sheet must have these columns:
+
+- **Programs**: `name`, `description`  
+- **Pillars**: `name`, `description`  
+- **Indicators**: `pillar_name`, `name`, `goal`  
+- **Activities**: `pillar_name`, `indicator_name`, `name`  
+        """
+    )
+    uploaded = st.file_uploader("Choose Excel file", type=["xlsx"])
+    if not uploaded:
+        return
+
+    try:
+        xls = pd.ExcelFile(uploaded)
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return
+
     conn = get_db_conn()
     c = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    summary = {}
 
-    # ── Create new pillar ────────────────────────────────────────────────────
-    st.subheader("Add a new pillar")
-    new_name = st.text_input("Pillar name", key="new_pillar_name")
-    new_desc = st.text_area("Description", key="new_pillar_desc")
-    if st.button("➕ Create pillar"):
-        now = datetime.utcnow().isoformat()
-        try:
-            c.execute(
-                "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
-                (new_name, new_desc, now, now)
-            )
-            conn.commit()
-            st.success(f"Added pillar » {new_name}")
-            st.rerun()
-        except sqlite3.IntegrityError:
-            st.error(f"A pillar named '{new_name}' already exists. Please choose a different name.")
-
-    # ── List & edit existing ─────────────────────────────────────────────────
-    st.subheader("Existing pillars")
-    pillars = c.execute("SELECT * FROM pillars ORDER BY name").fetchall()
-    for p in pillars:
-        with st.expander(p["name"]):
-            # Edit/delete pillar
-            col1, col2 = st.columns([3,1])
-            with col1:
-                updated_name = st.text_input(
-                    "Name",
-                    value=p["name"],
-                    key=f"pill_nm_{p['pillar_id']}"
-                )
-                updated_desc = st.text_area(
-                    "Description",
-                    value=p["description"],
-                    key=f"pill_desc_{p['pillar_id']}"
-                )
-            with col2:
-                if st.button("🗑️ Delete", key=f"del_pill_{p['pillar_id']}"):
-                    c.execute("DELETE FROM indicators WHERE pillar_id=?", (p["pillar_id"],))
-                    c.execute("DELETE FROM pillars WHERE pillar_id=?",   (p["pillar_id"],))
-                    conn.commit()
-                    st.success("Deleted pillar and its indicators.")
-                    st.rerun()
-
-            if st.button("💾 Save changes", key=f"save_pill_{p['pillar_id']}"):
-                now = datetime.utcnow().isoformat()
-                try:
-                    c.execute(
-                        "UPDATE pillars SET name=?,description=?,updated_at=? WHERE pillar_id=?",
-                        (updated_name, updated_desc, now, p["pillar_id"])
-                    )
-                    conn.commit()
-                    st.success("Pillar updated.")
-                    st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error(f"A pillar named '{updated_name}' already exists. Choose a different name.")
-
-            # ── Inline “Add new indicator” form ───────────────────────────────
-            st.markdown("#### ➕ Add new indicator")
-            ind_name = st.text_input(
-                "Indicator name",
-                key=f"new_ind_name_{p['pillar_id']}"
-            )
-            ind_goal = st.number_input(
-                "Goal (numeric)",
-                min_value=0,
-                step=1,
-                key=f"new_ind_goal_{p['pillar_id']}"
-            )
-            if st.button("Create indicator", key=f"create_ind_{p['pillar_id']}"):
-                now = datetime.utcnow().isoformat()
+    # — Programs —
+    if "Programs" in xls.sheet_names:
+        df = pd.read_excel(xls, "Programs")
+        count = 0
+        for _, row in df.iterrows():
+            name = str(row.get("name","")).strip()
+            desc = str(row.get("description","")).strip()
+            if not name:
+                continue
+            try:
                 c.execute(
-                    "INSERT INTO indicators (pillar_id,name,goal,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?)",
-                    (p["pillar_id"], ind_name, ind_goal, now, now)
+                    "INSERT INTO programs (name,description,created_at,updated_at) VALUES (?,?,?,?)",
+                    (name, desc, now, now)
                 )
-                conn.commit()
-                st.success(f"Added indicator » {ind_name}")
-                st.rerun()
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+        summary["Programs"] = count
 
-            # ── List & edit existing indicators ───────────────────────────────
-            st.markdown("**Existing indicators**")
-            inds = c.execute(
-                "SELECT * FROM indicators WHERE pillar_id=? ORDER BY name",
-                (p["pillar_id"],)
-            ).fetchall()
+    # — Pillars —
+    if "Pillars" in xls.sheet_names:
+        df = pd.read_excel(xls, "Pillars")
+        count = 0
+        for _, row in df.iterrows():
+            name = str(row.get("name","")).strip()
+            desc = str(row.get("description","")).strip()
+            if not name:
+                continue
+            try:
+                c.execute(
+                    "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
+                    (name, desc, now, now)
+                )
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+        summary["Pillars"] = count
 
-            for ind in inds:
-                cols = st.columns([3,1,1])
-                with cols[0]:
-                    new_ind_name = st.text_input(
-                        "Name",
-                        value=ind["name"],
-                        key=f"ind_nm_{ind['indicator_id']}"
-                    )
-                    new_ind_goal = st.number_input(
-                        "Goal",
-                        min_value=0,
-                        step=1,
-                        value=ind["goal"] or 0,
-                        key=f"ind_goal_{ind['indicator_id']}"
-                    )
-                with cols[1]:
-                    if st.button("💾", key=f"save_ind_{ind['indicator_id']}"):
-                        now = datetime.utcnow().isoformat()
-                        c.execute(
-                            "UPDATE indicators SET name=?,goal=?,updated_at=? WHERE indicator_id=?",
-                            (new_ind_name, new_ind_goal, now, ind["indicator_id"])
-                        )
-                        conn.commit()
-                        st.success("Indicator updated.")
-                        st.rerun()
-                with cols[2]:
-                    if st.button("🗑️", key=f"del_ind_{ind['indicator_id']}"):
-                        c.execute(
-                            "DELETE FROM indicators WHERE indicator_id=?",
-                            (ind["indicator_id"],)
-                        )
-                        conn.commit()
-                        st.success("Indicator deleted.")
-                        st.rerun()
+    # — Indicators —
+    if "Indicators" in xls.sheet_names:
+        df = pd.read_excel(xls, "Indicators")
+        count = 0
+        for _, row in df.iterrows():
+            pillar_nm = str(row.get("pillar_name","")).strip()
+            ind_nm    = str(row.get("name","")).strip()
+            goal      = row.get("goal", 0)
+            if not pillar_nm or not ind_nm:
+                continue
+            res = c.execute(
+                "SELECT pillar_id FROM pillars WHERE name=?",
+                (pillar_nm,)
+            ).fetchone()
+            if not res:
+                st.warning(f"Skipping indicator '{ind_nm}': pillar '{pillar_nm}' not found.")
+                continue
+            pid = res["pillar_id"]
+            try:
+                c.execute(
+                    "INSERT INTO indicators (pillar_id,name,goal,created_at,updated_at) VALUES (?,?,?,?,?)",
+                    (pid, ind_nm, int(goal), now, now)
+                )
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+        summary["Indicators"] = count
 
-def main():
-    init_db()
-    st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Go to", ["Pillars & Indicators"])
-    if page == "Pillars & Indicators":
-        manage_pillars_and_indicators()
+    # — Activities —
+    if "Activities" in xls.sheet_names:
+        df = pd.read_excel(xls, "Activities")
+        count = 0
+        for _, row in df.iterrows():
+            pillar_nm    = str(row.get("pillar_name","")).strip()
+            ind_nm       = str(row.get("indicator_name","")).strip()
+            act_nm       = str(row.get("name","")).strip()
+            if not pillar_nm or not ind_nm or not act_nm:
+                continue
+            res_p = c.execute(
+                "SELECT pillar_id FROM pillars WHERE name=?",
+                (pillar_nm,)
+            ).fetchone()
+            if not res_p:
+                st.warning(f"Skipping activity '{act_nm}': pillar '{pillar_nm}' not found.")
+                continue
+            pid = res_p["pillar_id"]
+            res_i = c.execute(
+                "SELECT indicator_id FROM indicators WHERE name=? AND pillar_id=?",
+                (ind_nm, pid)
+            ).fetchone()
+            if not res_i:
+                st.warning(f"Skipping activity '{act_nm}': indicator '{ind_nm}' not found under pillar '{pillar_nm}'.")
+                continue
+            iid = res_i["indicator_id"]
+            try:
+                c.execute(
+                    "INSERT INTO activities (indicator_id,name,created_at,updated_at) VALUES (?,?,?,?)",
+                    (iid, act_nm, now, now)
+                )
+                count += 1
+            except sqlite3.IntegrityError:
+                pass
+        summary["Activities"] = count
 
-if __name__ == "__main__":
-    main()
+    conn.commit()
+    st.success("Import complete!")
+    for k,v in summary.items():
+        st.write(f"- {k}: added {v} new rows")
