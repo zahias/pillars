@@ -54,7 +54,7 @@ def manage_pillars_and_indicators():
         )
         conn.commit()
         st.success(f"Added pillar » {new_name}")
-        st.experimental_rerun()
+        st.rerun()
 
     # ── List & edit existing ─────────────────────────────────────────────────
     st.subheader("Existing pillars")
@@ -72,7 +72,7 @@ def manage_pillars_and_indicators():
                     c.execute("DELETE FROM pillars WHERE pillar_id=?", (p["pillar_id"],))
                     conn.commit()
                     st.success("Deleted.")
-                    st.experimental_rerun()
+                    st.rerun()
 
             if st.button("💾 Save changes", key=f"save_pill_{p['pillar_id']}"):
                 now = datetime.utcnow().isoformat()
@@ -82,7 +82,7 @@ def manage_pillars_and_indicators():
                 )
                 conn.commit()
                 st.success("Updated.")
-                st.experimental_rerun()
+                st.rerun()
 
             # ── Indicators under this pillar ─────────────────────────────────
             st.markdown("**Indicators**")
@@ -103,7 +103,7 @@ def manage_pillars_and_indicators():
                     )
                     conn.commit()
                     st.success(f"Added indicator » {ind_name}")
-                    st.experimental_rerun()
+                    st.rerun()
 
             # Edit/delete existing indicators
             for ind in inds:
@@ -120,13 +120,13 @@ def manage_pillars_and_indicators():
                         )
                         conn.commit()
                         st.success("Saved.")
-                        st.experimental_rerun()
+                        st.rerun()
                 with cols[2]:
                     if st.button("🗑️", key=f"del_ind_{ind['indicator_id']}"):
                         c.execute("DELETE FROM indicators WHERE indicator_id=?", (ind["indicator_id"],))
                         conn.commit()
                         st.success("Deleted.")
-                        st.experimental_rerun()
+                        st.rerun()
 
 def main():
     init_db()
