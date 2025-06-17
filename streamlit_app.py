@@ -1,10 +1,14 @@
+# streamlit_app.py
+
 import streamlit as st
 import sqlite3
 from datetime import datetime
 
-# ── Database helpers ──────────────────────────────────────────────────────
+# ── MUST be the very first Streamlit command ────────────────────────────────
+st.set_page_config(page_title="Pillars Tracker", layout="wide")
 
-@st.cache(allow_output_mutation=True)
+# ── Database helper: cache the connection as a resource ──────────────────────
+@st.cache_resource
 def get_db_conn():
     conn = sqlite3.connect("pillars.db", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -33,33 +37,31 @@ def init_db():
     """)
     conn.commit()
 
-# ── Pillars & Indicators Page ────────────────────────────────────────────
-
 def manage_pillars_and_indicators():
     st.header("🏛️ Pillars & Indicators")
-
     conn = get_db_conn()
     c = conn.cursor()
 
-    # — Pillar CRUD —
-    st.subheader("Pillars")
-    pillars = c.execute("SELECT * FROM pillars ORDER BY name").fetchall()
-    with st.expander("Add new pillar"):
-        new_name = st.text_input("Name", key="new_pillar_name")
-        new_desc = st.text_area("Description", key="new_pillar_desc")
-        if st.button("➕ Create pillar"):
-            now = datetime.utcnow().isoformat()
-            c.execute(
-                "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
-                (new_name, new_desc, now, now)
-            )
-            conn.commit()
-            st.success(f"Pillar '{new_name}' added.")
-            st.experimental_rerun()
+    # ── Create new pillar ────────────────────────────────────────────────────
+    st.subheader("Add a new pillar")
+    new_name = st.text_input("Pillar name", key="new_pillar_name")
+    new_desc = st.text_area("Description", key="new_pillar_desc")
+    if st.button("➕ Create pillar"):
+        now = datetime.utcnow().isoformat()
+        c.execute(
+            "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
+            (new_name, new_desc, now, now)
+        )
+        conn.commit()
+        st.success(f"Added pillar » {new_name}")
+        st.experimental_rerun()
 
+    # ── List & edit existing ─────────────────────────────────────────────────
+    st.subheader("Existing pillars")
+    pillars = c.execute("SELECT * FROM pillars ORDER BY name").fetchall()
     for p in pillars:
-        with st.expander(f"{p['name']}"):
-            # Edit/Delete Pillar
+        with st.expander(p["name"]):
+            # Edit/delete pillar
             col1, col2 = st.columns([3,1])
             with col1:
                 updated_name = st.text_input("Name", value=p["name"], key=f"pill_nm_{p['pillar_id']}")
@@ -71,6 +73,7 @@ def manage_pillars_and_indicators():
                     conn.commit()
                     st.success("Deleted.")
                     st.experimental_rerun()
+
             if st.button("💾 Save changes", key=f"save_pill_{p['pillar_id']}"):
                 now = datetime.utcnow().isoformat()
                 c.execute(
@@ -81,13 +84,14 @@ def manage_pillars_and_indicators():
                 st.success("Updated.")
                 st.experimental_rerun()
 
-            # — Indicator CRUD under this pillar —
+            # ── Indicators under this pillar ─────────────────────────────────
             st.markdown("**Indicators**")
             inds = c.execute(
                 "SELECT * FROM indicators WHERE pillar_id=? ORDER BY name",
                 (p["pillar_id"],)
             ).fetchall()
 
+            # Add new indicator
             with st.expander("Add new indicator"):
                 ind_name = st.text_input("Indicator name", key=f"new_ind_name_{p['pillar_id']}")
                 ind_goal = st.number_input("Goal (numeric)", min_value=0, step=1, key=f"new_ind_goal_{p['pillar_id']}")
@@ -98,9 +102,10 @@ def manage_pillars_and_indicators():
                         (p["pillar_id"], ind_name, ind_goal, now, now)
                     )
                     conn.commit()
-                    st.success(f"Indicator '{ind_name}' added.")
+                    st.success(f"Added indicator » {ind_name}")
                     st.experimental_rerun()
 
+            # Edit/delete existing indicators
             for ind in inds:
                 cols = st.columns([3,1,1])
                 with cols[0]:
@@ -123,16 +128,11 @@ def manage_pillars_and_indicators():
                         st.success("Deleted.")
                         st.experimental_rerun()
 
-# ── Main ─────────────────────────────────────────────────────────────────
-
 def main():
-    st.set_page_config(page_title="Pillars Tracker", layout="wide")
     init_db()
-
     st.sidebar.title("Navigation")
-    choice = st.sidebar.radio("Go to", ["Pillars & Indicators"])
-
-    if choice == "Pillars & Indicators":
+    page = st.sidebar.radio("Go to", ["Pillars & Indicators"])
+    if page == "Pillars & Indicators":
         manage_pillars_and_indicators()
 
 if __name__ == "__main__":
