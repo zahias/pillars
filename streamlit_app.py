@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 
-# ── Must be first Streamlit command ────────────────────────────────────────
+# ── Must be the very first Streamlit command ────────────────────────────────
 st.set_page_config(page_title="Pillars Tracker", layout="wide")
 
 # ── Database helper: cache the connection as a resource ────────────────────
@@ -18,6 +18,7 @@ def get_db_conn():
 def init_db():
     conn = get_db_conn()
     c = conn.cursor()
+    # Core tables
     c.executescript("""
     CREATE TABLE IF NOT EXISTS programs (
       program_id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,29 +51,38 @@ def init_db():
       updated_at   TEXT,
       FOREIGN KEY(indicator_id) REFERENCES indicators(indicator_id)
     );
-    CREATE TABLE IF NOT EXISTS activity_details (
-      detail_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      activity_id    INTEGER NOT NULL,
-      year           INTEGER,
-      quarter        TEXT,
-      program_id     INTEGER,
-      status         TEXT,
-      trigger        TEXT,
-      organization   TEXT,
-      contact_person TEXT,
-      position       TEXT,
-      contact_info   TEXT,
-      objective      TEXT,
-      final_outcome  TEXT,
-      comments       TEXT,
-      created_at     TEXT,
-      FOREIGN KEY(activity_id)  REFERENCES activities(activity_id),
-      FOREIGN KEY(program_id)   REFERENCES programs(program_id)
+    """)
+    # Dynamic detail-entry schema
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS detail_fields (
+      field_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id  INTEGER NOT NULL,
+      name         TEXT NOT NULL,
+      field_type   TEXT NOT NULL,      -- "Text" or "Number"
+      order_index  INTEGER DEFAULT 0,
+      FOREIGN KEY(activity_id) REFERENCES activities(activity_id)
+    );
+    CREATE TABLE IF NOT EXISTS detail_entries (
+      entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      activity_id  INTEGER NOT NULL,
+      program_id   INTEGER,
+      created_at   TEXT,
+      FOREIGN KEY(activity_id) REFERENCES activities(activity_id),
+      FOREIGN KEY(program_id)  REFERENCES programs(program_id)
+    );
+    CREATE TABLE IF NOT EXISTS detail_values (
+      value_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id     INTEGER NOT NULL,
+      field_id     INTEGER NOT NULL,
+      value_text   TEXT,
+      value_number REAL,
+      FOREIGN KEY(entry_id) REFERENCES detail_entries(entry_id),
+      FOREIGN KEY(field_id) REFERENCES detail_fields(field_id)
     );
     """)
     conn.commit()
 
-# ── Page: Import Parameters ─────────────────────────────────────────────────
+# ── Import parameters from Excel ───────────────────────────────────────────
 def import_parameters():
     st.header("🔄 Import Parameters from Excel")
     st.markdown("""
@@ -104,10 +114,8 @@ Each sheet needs these columns:
         df = pd.read_excel(xls, "Programs")
         added = 0
         for _, row in df.iterrows():
-            name = str(row.get("name","")).strip()
-            desc = str(row.get("description","")).strip()
-            if not name:
-                continue
+            name, desc = str(row.get("name","")).strip(), str(row.get("description","")).strip()
+            if not name: continue
             try:
                 c.execute(
                     "INSERT INTO programs (name,description,created_at,updated_at) VALUES (?,?,?,?)",
@@ -123,10 +131,8 @@ Each sheet needs these columns:
         df = pd.read_excel(xls, "Pillars")
         added = 0
         for _, row in df.iterrows():
-            name = str(row.get("name","")).strip()
-            desc = str(row.get("description","")).strip()
-            if not name:
-                continue
+            name, desc = str(row.get("name","")).strip(), str(row.get("description","")).strip()
+            if not name: continue
             try:
                 c.execute(
                     "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
@@ -142,15 +148,9 @@ Each sheet needs these columns:
         df = pd.read_excel(xls, "Indicators")
         added = 0
         for _, row in df.iterrows():
-            pillar_nm = str(row.get("pillar_name","")).strip()
-            ind_nm    = str(row.get("name","")).strip()
-            goal      = row.get("goal", 0)
-            if not pillar_nm or not ind_nm:
-                continue
-            res = c.execute(
-                "SELECT pillar_id FROM pillars WHERE name=?",
-                (pillar_nm,)
-            ).fetchone()
+            pillar_nm, ind_nm, goal = str(row.get("pillar_name","")).strip(), str(row.get("name","")).strip(), row.get("goal",0)
+            if not pillar_nm or not ind_nm: continue
+            res = c.execute("SELECT pillar_id FROM pillars WHERE name=?", (pillar_nm,)).fetchone()
             if not res:
                 st.warning(f"Skipping indicator '{ind_nm}': pillar '{pillar_nm}' not found.")
                 continue
@@ -170,15 +170,9 @@ Each sheet needs these columns:
         df = pd.read_excel(xls, "Activities")
         added = 0
         for _, row in df.iterrows():
-            pillar_nm = str(row.get("pillar_name","")).strip()
-            ind_nm    = str(row.get("indicator_name","")).strip()
-            act_nm    = str(row.get("name","")).strip()
-            if not pillar_nm or not ind_nm or not act_nm:
-                continue
-            res_p = c.execute(
-                "SELECT pillar_id FROM pillars WHERE name=?",
-                (pillar_nm,)
-            ).fetchone()
+            pillar_nm, ind_nm, act_nm = str(row.get("pillar_name","")).strip(), str(row.get("indicator_name","")).strip(), str(row.get("name","")).strip()
+            if not pillar_nm or not ind_nm or not act_nm: continue
+            res_p = c.execute("SELECT pillar_id FROM pillars WHERE name=?", (pillar_nm,)).fetchone()
             if not res_p:
                 st.warning(f"Skipping activity '{act_nm}': pillar '{pillar_nm}' not found.")
                 continue
@@ -203,7 +197,7 @@ Each sheet needs these columns:
 
     conn.commit()
     st.success("Import complete!")
-    for k,v in summary.items():
+    for k, v in summary.items():
         st.write(f"- {k}: {v} new rows added")
 
 # ── Page: Manage Programs ──────────────────────────────────────────────────
@@ -229,8 +223,7 @@ def manage_programs():
             st.error(f"A program named '{p_name}' already exists.")
 
     st.subheader("Existing programs")
-    progs = c.execute("SELECT * FROM programs ORDER BY name").fetchall()
-    for pr in progs:
+    for pr in c.execute("SELECT * FROM programs ORDER BY name").fetchall():
         with st.expander(pr["name"]):
             col1, col2 = st.columns([3,1])
             with col1:
@@ -238,7 +231,8 @@ def manage_programs():
                 upd_desc = st.text_area("Description", value=pr["description"], key=f"prog_desc_{pr['program_id']}")
             with col2:
                 if st.button("🗑️ Delete", key=f"del_prog_{pr['program_id']}"):
-                    c.execute("DELETE FROM activity_details WHERE program_id=?", (pr["program_id"],))
+                    c.execute("DELETE FROM detail_values WHERE entry_id IN (SELECT entry_id FROM detail_entries WHERE program_id=?)", (pr["program_id"],))
+                    c.execute("DELETE FROM detail_entries WHERE program_id=?", (pr["program_id"],))
                     c.execute("DELETE FROM programs WHERE program_id=?", (pr["program_id"],))
                     conn.commit()
                     st.success("Deleted program and its details.")
@@ -279,8 +273,7 @@ def manage_pillars_and_indicators():
             st.error(f"A pillar named '{new_name}' already exists.")
 
     st.subheader("Existing pillars")
-    pillars = c.execute("SELECT * FROM pillars ORDER BY name").fetchall()
-    for p in pillars:
+    for p in c.execute("SELECT * FROM pillars ORDER BY name").fetchall():
         with st.expander(p["name"]):
             col1, col2 = st.columns([3,1])
             with col1:
@@ -289,9 +282,13 @@ def manage_pillars_and_indicators():
             with col2:
                 if st.button("🗑️ Delete", key=f"del_pill_{p['pillar_id']}"):
                     c.execute("DELETE FROM indicators WHERE pillar_id=?", (p["pillar_id"],))
+                    c.execute("DELETE FROM detail_values WHERE entry_id IN (SELECT entry_id FROM detail_entries WHERE activity_id IN (SELECT activity_id FROM activities WHERE indicator_id IN (SELECT indicator_id FROM indicators WHERE pillar_id=?)))", (p["pillar_id"],))
+                    c.execute("DELETE FROM detail_entries WHERE activity_id IN (SELECT activity_id FROM activities WHERE indicator_id IN (SELECT indicator_id FROM indicators WHERE pillar_id=?))", (p["pillar_id"],))
+                    c.execute("DELETE FROM activities WHERE indicator_id IN (SELECT indicator_id FROM indicators WHERE pillar_id=?)", (p["pillar_id"],))
+                    c.execute("DELETE FROM indicators WHERE pillar_id=?", (p["pillar_id"],))
                     c.execute("DELETE FROM pillars WHERE pillar_id=?", (p["pillar_id"],))
                     conn.commit()
-                    st.success("Deleted pillar & its indicators.")
+                    st.success("Deleted pillar and all its sub-items.")
                     st.rerun()
             if st.button("Save changes", key=f"save_pill_{p['pillar_id']}"):
                 now = datetime.utcnow().isoformat()
@@ -320,11 +317,11 @@ def manage_pillars_and_indicators():
                 st.success(f"Indicator '{ind_name}' added.")
                 st.rerun()
 
+            # List & edit indicators
             st.markdown("**Existing indicators**")
-            inds = c.execute(
+            for ind in c.execute(
                 "SELECT * FROM indicators WHERE pillar_id=? ORDER BY name", (p["pillar_id"],)
-            ).fetchall()
-            for ind in inds:
+            ).fetchall():
                 cols = st.columns([3,1,1])
                 with cols[0]:
                     nm = st.text_input("Name", value=ind["name"], key=f"ind_nm_{ind['indicator_id']}")
@@ -346,7 +343,7 @@ def manage_pillars_and_indicators():
                         st.success("Indicator deleted.")
                         st.rerun()
 
-# ── Page: Manage Activities & Details ─────────────────────────────────────
+# ── Page: Manage Activities & Dynamic Details ──────────────────────────────
 def manage_activities():
     st.header("📋 Activities & Details")
     conn = get_db_conn()
@@ -391,19 +388,21 @@ def manage_activities():
         st.success(f"Activity '{new_act}' added.")
         st.rerun()
 
-    # List activities
-    acts = c.execute("SELECT * FROM activities WHERE indicator_id=? ORDER BY name", (iid,)).fetchall()
-    for act in acts:
+    # Step 3: For each activity -> manage fields & entries
+    for act in c.execute("SELECT * FROM activities WHERE indicator_id=? ORDER BY name", (iid,)).fetchall():
         with st.expander(act["name"]):
+            # Rename / delete activity
             col1, col2 = st.columns([3,1])
             with col1:
                 upd_act = st.text_input("Name", value=act["name"], key=f"act_nm_{act['activity_id']}")
             with col2:
                 if st.button("🗑️ Delete activity", key=f"del_act_{act['activity_id']}"):
-                    c.execute("DELETE FROM activity_details WHERE activity_id=?", (act["activity_id"],))
+                    c.execute("DELETE FROM detail_values WHERE entry_id IN (SELECT entry_id FROM detail_entries WHERE activity_id=?)", (act["activity_id"],))
+                    c.execute("DELETE FROM detail_entries WHERE activity_id=?", (act["activity_id"],))
+                    c.execute("DELETE FROM detail_fields WHERE activity_id=?", (act["activity_id"],))
                     c.execute("DELETE FROM activities WHERE activity_id=?", (act["activity_id"],))
                     conn.commit()
-                    st.success("Activity and its details deleted.")
+                    st.success("Activity and all its details deleted.")
                     st.rerun()
             if st.button("Save activity name", key=f"save_act_{act['activity_id']}"):
                 now = datetime.utcnow().isoformat()
@@ -415,62 +414,123 @@ def manage_activities():
                 st.success("Activity renamed.")
                 st.rerun()
 
-            # Step 3: Add detail record
+            # ── Manage detail-fields schema for this activity ─────────────
+            st.markdown("#### 🛠 Manage detail fields")
+            # List existing fields
+            for fld in c.execute(
+                "SELECT * FROM detail_fields WHERE activity_id=? ORDER BY order_index, field_id",
+                (act["activity_id"],)
+            ).fetchall():
+                fcol1, fcol2, fcol3, fcol4 = st.columns([4,2,1,1])
+                with fcol1:
+                    new_name = st.text_input("Field name", value=fld["name"], key=f"fld_nm_{fld['field_id']}")
+                with fcol2:
+                    new_type = st.selectbox(
+                        "Type",
+                        ["Text","Number"],
+                        index=0 if fld["field_type"]=="Text" else 1,
+                        key=f"fld_tp_{fld['field_id']}"
+                    )
+                with fcol3:
+                    new_order = st.number_input(
+                        "Order",
+                        min_value=0,
+                        step=1,
+                        value=fld["order_index"] or 0,
+                        key=f"fld_ord_{fld['field_id']}"
+                    )
+                with fcol4:
+                    if st.button("🗑️", key=f"del_fld_{fld['field_id']}"):
+                        c.execute("DELETE FROM detail_fields WHERE field_id=?", (fld["field_id"],))
+                        conn.commit()
+                        st.success("Field deleted.")
+                        st.rerun()
+                if st.button("Save", key=f"save_fld_{fld['field_id']}"):
+                    c.execute(
+                        "UPDATE detail_fields SET name=?,field_type=?,order_index=? WHERE field_id=?",
+                        (new_name, new_type, new_order, fld["field_id"])
+                    )
+                    conn.commit()
+                    st.success("Field updated.")
+                    st.rerun()
+
+            # Form to add a new field
+            with st.expander("➕ Add new detail field", expanded=False):
+                nf_name = st.text_input("Field name", key=f"new_fld_nm_{act['activity_id']}")
+                nf_type = st.selectbox("Type", ["Text","Number"], key=f"new_fld_tp_{act['activity_id']}")
+                nf_order = st.number_input("Order", min_value=0, step=1, key=f"new_fld_ord_{act['activity_id']}")
+                if st.button("Add field", key=f"add_fld_{act['activity_id']}"):
+                    c.execute(
+                        "INSERT INTO detail_fields (activity_id,name,field_type,order_index) VALUES (?,?,?,?)",
+                        (act["activity_id"], nf_name, nf_type, nf_order)
+                    )
+                    conn.commit()
+                    st.success("Field added.")
+                    st.rerun()
+
+            # ── Add detail entry with dynamic fields ───────────────────────
             st.markdown("#### ➕ Add detail entry")
-            year = st.number_input("Year", min_value=2000, max_value=2100, step=1, key=f"det_year_{act['activity_id']}")
-            quarter = st.selectbox("Quarter", ["Q1","Q2","Q3","Q4"], key=f"det_q_{act['activity_id']}")
-            status = st.text_input("Status", key=f"det_status_{act['activity_id']}")
-            trigger = st.text_input("Trigger", key=f"det_trig_{act['activity_id']}")
-            org = st.text_input("Organization", key=f"det_org_{act['activity_id']}")
-            contact_person = st.text_input("Contact Person", key=f"det_cp_{act['activity_id']}")
-            position = st.text_input("Position", key=f"det_pos_{act['activity_id']}")
-            contact_info = st.text_input("Contact Information", key=f"det_ci_{act['activity_id']}")
-            objective = st.text_area("Objective", key=f"det_obj_{act['activity_id']}")
-            final_outcome = st.text_area("Final Outcome", key=f"det_fo_{act['activity_id']}")
-            comments = st.text_area("Comments", key=f"det_com_{act['activity_id']}")
+            # Load schema
+            schema = c.execute(
+                "SELECT * FROM detail_fields WHERE activity_id=? ORDER BY order_index, field_id",
+                (act["activity_id"],)
+            ).fetchall()
+            entry_values = {}
+            for fld in schema:
+                key = f"det_{fld['field_id']}_{act['activity_id']}"
+                if fld["field_type"] == "Number":
+                    entry_values[fld["field_id"]] = st.number_input(fld["name"], key=key)
+                else:
+                    entry_values[fld["field_id"]] = st.text_input(fld["name"], key=key)
 
             if st.button("Save detail", key=f"save_det_{act['activity_id']}"):
                 now = datetime.utcnow().isoformat()
-                c.execute("""
-                  INSERT INTO activity_details
-                  (activity_id, year, quarter, program_id, status, trigger, organization,
-                   contact_person, position, contact_info, objective, final_outcome, comments, created_at)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                  act["activity_id"], year, quarter, pid, status, trigger, org,
-                  contact_person, position, contact_info, objective, final_outcome, comments, now
-                ))
+                c.execute(
+                    "INSERT INTO detail_entries (activity_id,program_id,created_at) VALUES (?,?,?)",
+                    (act["activity_id"], pid, now)
+                )
+                entry_id = c.lastrowid
+                for fid, val in entry_values.items():
+                    if isinstance(val, (int, float)):
+                        c.execute(
+                            "INSERT INTO detail_values (entry_id,field_id,value_number) VALUES (?,?,?)",
+                            (entry_id, fid, val)
+                        )
+                    else:
+                        c.execute(
+                            "INSERT INTO detail_values (entry_id,field_id,value_text) VALUES (?,?,?)",
+                            (entry_id, fid, val)
+                        )
                 conn.commit()
-                st.success("Detail saved.")
+                st.success("Detail entry saved.")
                 st.rerun()
 
+            # ── List & delete existing detail entries ─────────────────────
             st.markdown("**Existing detail entries**")
-            dets = c.execute(
-                "SELECT * FROM activity_details WHERE activity_id=? ORDER BY detail_id DESC",
+            for en in c.execute(
+                "SELECT * FROM detail_entries WHERE activity_id=? ORDER BY entry_id DESC",
                 (act["activity_id"],)
-            ).fetchall()
-            for det in dets:
-                cols = st.columns([9,1])
-                with cols[0]:
-                    st.markdown(f"""
-- **Year:** {det['year']}  
-- **Quarter:** {det['quarter']}  
-- **Status:** {det['status']}  
-- **Trigger:** {det['trigger']}  
-- **Organization:** {det['organization']}  
-- **Contact Person:** {det['contact_person']}  
-- **Position:** {det['position']}  
-- **Contact Info:** {det['contact_info']}  
-- **Objective:** {det['objective']}  
-- **Final Outcome:** {det['final_outcome']}  
-- **Comments:** {det['comments']}  
-                    """)
-                with cols[1]:
-                    if st.button("🗑️", key=f"del_det_{det['detail_id']}"):
-                        c.execute("DELETE FROM activity_details WHERE detail_id=?", (det['detail_id'],))
-                        conn.commit()
-                        st.success("Detail deleted.")
-                        st.rerun()
+            ).fetchall():
+                st.markdown(f"**Entry #{en['entry_id']}** (created: {en['created_at']})")
+                vals = c.execute(
+                    """
+                    SELECT dv.*, df.name, df.field_type
+                    FROM detail_values dv
+                    JOIN detail_fields df ON dv.field_id=df.field_id
+                    WHERE dv.entry_id=?
+                    ORDER BY df.order_index, df.field_id
+                    """,
+                    (en["entry_id"],)
+                ).fetchall()
+                for v in vals:
+                    disp = v["value_number"] if v["field_type"]=="Number" else v["value_text"]
+                    st.write(f"- **{v['name']}**: {disp}")
+                if st.button("🗑️ Delete entry", key=f"del_en_{en['entry_id']}"):
+                    c.execute("DELETE FROM detail_values WHERE entry_id=?", (en["entry_id"],))
+                    c.execute("DELETE FROM detail_entries WHERE entry_id=?", (en["entry_id"],))
+                    conn.commit()
+                    st.success("Entry deleted.")
+                    st.rerun()
 
 # ── Main ───────────────────────────────────────────────────────────────────
 def main():
