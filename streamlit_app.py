@@ -32,7 +32,7 @@ with tab1:
         - When you’re done, use the button at the bottom to download your updated workbook.
         """
     )
-    # Show each sheet in an expander with a data editor
+    # Editable sheets
     for sheet_name, df in st.session_state.excel_data.items():
         with st.expander(sheet_name, expanded=False):
             edited_df = st.data_editor(
@@ -41,15 +41,14 @@ with tab1:
                 num_rows="dynamic",
                 use_container_width=True
             )
-            # Persist edits
             st.session_state.excel_data[sheet_name] = edited_df
 
-    # Download button
+    # Download updated Excel
     towrite = io.BytesIO()
     with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
         for sheet, df in st.session_state.excel_data.items():
             df.to_excel(writer, sheet_name=sheet, index=False)
-    # No writer.save() needed
+    # NO writer.save() here
     towrite.seek(0)
     st.download_button(
         label="💾 Download Updated Excel",
@@ -75,12 +74,12 @@ with tab2:
         st.warning(f"No numeric columns found in **{sheet}** for reporting.")
     else:
         num_col = st.selectbox("Numeric field to summarize", numeric_cols)
-        # Allow grouping
+        # Optional grouping
         groupable = [c for c in df_report.columns if c != num_col]
         group_cols = st.multiselect("Group by (optional)", groupable)
 
         if st.button("▶️ Generate Report"):
-            # Build pivot
+            # Build pivot table
             if group_cols:
                 pivot = df_report.groupby(group_cols)[num_col].sum().reset_index()
             else:
