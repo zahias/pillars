@@ -1,4 +1,3 @@
-# db.py
 import sqlite3
 from streamlit import cache_resource
 
@@ -45,13 +44,13 @@ def init_db():
       FOREIGN KEY(indicator_id) REFERENCES indicators(indicator_id)
     );
     """)
-    # dynamic-detail schema
+    # dynamic-detail schema (fields, entries, values)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS detail_fields (
       field_id     INTEGER PRIMARY KEY AUTOINCREMENT,
       activity_id  INTEGER NOT NULL,
       name         TEXT NOT NULL,
-      field_type   TEXT NOT NULL,      -- "Text" or "Number"
+      field_type   TEXT NOT NULL,
       order_index  INTEGER DEFAULT 0,
       FOREIGN KEY(activity_id) REFERENCES activities(activity_id)
     );
