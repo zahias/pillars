@@ -1,207 +1,139 @@
-import io
-from datetime import datetime
-from typing import Dict
-
-import pandas as pd
-import plotly.express as px
 import streamlit as st
-import pdfkit
+import sqlite3
+from datetime import datetime
 
-st.set_page_config(layout="wide", page_title="Pillars Dashboard")
+# ── Database helpers ──────────────────────────────────────────────────────
 
+@st.experimental_singleton
+def get_db_conn():
+    conn = sqlite3.connect("pillars.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def make_excel_template() -> bytes:
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        pd.DataFrame(columns=["Pillar", "Indicator", "Actual", "Goal"]) \
-            .to_excel(writer, sheet_name="Pillars Structure", index=False)
-        pd.DataFrame(columns=["Date", "Pillar", "Program", "Indicator"]) \
-            .to_excel(writer, sheet_name="Activities", index=False)
-        pd.DataFrame(columns=["Date", "Posts", "Reach"]) \
-            .to_excel(writer, sheet_name="Social Media", index=False)
-        pd.DataFrame(columns=["Date", "Program", "Attendees"]) \
-            .to_excel(writer, sheet_name="Meetings", index=False)
-        pd.DataFrame(columns=["Date", "Status"]) \
-            .to_excel(writer, sheet_name="Grants", index=False)
-        pd.DataFrame(columns=["Name", "Pillar", "Program", "Link"]) \
-            .to_excel(writer, sheet_name="Documents", index=False)
-    return buffer.getvalue()
+def init_db():
+    conn = get_db_conn()
+    c = conn.cursor()
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS pillars (
+      pillar_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+      name         TEXT NOT NULL UNIQUE,
+      description  TEXT,
+      created_at   TEXT,
+      updated_at   TEXT
+    );
+    CREATE TABLE IF NOT EXISTS indicators (
+      indicator_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pillar_id    INTEGER NOT NULL,
+      name         TEXT NOT NULL,
+      goal         INTEGER,
+      created_at   TEXT,
+      updated_at   TEXT,
+      FOREIGN KEY(pillar_id) REFERENCES pillars(pillar_id)
+    );
+    """)
+    conn.commit()
 
+# ── Pillars & Indicators Page ────────────────────────────────────────────
 
-def load_sheets(uploaded: io.BytesIO) -> Dict[str, pd.DataFrame]:
-    required = [
-        "Pillars Structure",
-        "Activities",
-        "Social Media",
-        "Meetings",
-        "Grants",
-        "Documents",
-    ]
-    try:
-        xl = pd.read_excel(uploaded, sheet_name=None, engine="openpyxl")
-    except Exception as e:
-        st.error(f"Failed to read Excel: {e}")
-        return {}
-    dfs = {}
-    for name in required:
-        dfs[name] = xl.get(name, pd.DataFrame()).copy()
-        if dfs[name].empty:
-            st.warning(f"Sheet '{name}' missing or empty.")
-    return dfs
+def manage_pillars_and_indicators():
+    st.header("🏛️ Pillars & Indicators")
 
+    conn = get_db_conn()
+    c = conn.cursor()
 
-def compute_kpis(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.dropna(subset=["Pillar", "Indicator", "Actual", "Goal"]).copy()
-    df["% Complete"] = (df["Actual"] / df["Goal"]).clip(upper=1.0) * 100
-    return df
+    # — Pillar CRUD —
+    st.subheader("Pillars")
+    pillars = c.execute("SELECT * FROM pillars ORDER BY name").fetchall()
+    with st.expander("Add new pillar"):
+        new_name = st.text_input("Name", key="new_pillar_name")
+        new_desc = st.text_area("Description", key="new_pillar_desc")
+        if st.button("➕ Create pillar"):
+            now = datetime.utcnow().isoformat()
+            c.execute(
+                "INSERT INTO pillars (name,description,created_at,updated_at) VALUES (?,?,?,?)",
+                (new_name, new_desc, now, now)
+            )
+            conn.commit()
+            st.success(f"Pillar '{new_name}' added.")
+            st.experimental_rerun()
 
+    for p in pillars:
+        with st.expander(f"{p['name']}", expanded=False):
+            # Edit/Delete Pillar
+            col1, col2 = st.columns([3,1])
+            with col1:
+                updated_name = st.text_input("Name", value=p["name"], key=f"pill_nm_{p['pillar_id']}")
+                updated_desc = st.text_area("Description", value=p["description"], key=f"pill_desc_{p['pillar_id']}")
+            with col2:
+                if st.button("🗑️ Delete", key=f"del_pill_{p['pillar_id']}"):
+                    c.execute("DELETE FROM indicators WHERE pillar_id=?", (p["pillar_id"],))
+                    c.execute("DELETE FROM pillars WHERE pillar_id=?", (p["pillar_id"],))
+                    conn.commit()
+                    st.success("Deleted.")
+                    st.experimental_rerun()
+            if st.button("💾 Save changes", key=f"save_pill_{p['pillar_id']}"):
+                now = datetime.utcnow().isoformat()
+                c.execute(
+                    "UPDATE pillars SET name=?,description=?,updated_at=? WHERE pillar_id=?",
+                    (updated_name, updated_desc, now, p["pillar_id"])
+                )
+                conn.commit()
+                st.success("Updated.")
+                st.experimental_rerun()
 
-def make_cards(df_kpi: pd.DataFrame):
-    cols = st.columns(min(4, len(df_kpi)))
-    for (idx, row), col in zip(df_kpi.iterrows(), cols):
-        col.metric(
-            label=f"{row.Pillar} - {row.Indicator}",
-            value=f"{int(row.Actual)} / {int(row.Goal)}",
-            delta=f"{row['% Complete']:.0f}%"
-        )
+            # — Indicator CRUD under this pillar —
+            st.markdown("**Indicators**")
+            inds = c.execute(
+                "SELECT * FROM indicators WHERE pillar_id=? ORDER BY name",
+                (p["pillar_id"],)
+            ).fetchall()
 
+            with st.expander("Add new indicator", expanded=False):
+                ind_name = st.text_input("Indicator name", key=f"new_ind_name_{p['pillar_id']}")
+                ind_goal = st.number_input("Goal (numeric)", min_value=0, step=1, key=f"new_ind_goal_{p['pillar_id']}")
+                if st.button("➕ Create indicator", key=f"create_ind_{p['pillar_id']}"):
+                    now = datetime.utcnow().isoformat()
+                    c.execute(
+                        "INSERT INTO indicators (pillar_id,name,goal,created_at,updated_at) VALUES (?,?,?,?,?)",
+                        (p["pillar_id"], ind_name, ind_goal, now, now)
+                    )
+                    conn.commit()
+                    st.success(f"Indicator '{ind_name}' added.")
+                    st.experimental_rerun()
 
-def plot_pillar_progress(df_kpi: pd.DataFrame):
-    dfm = df_kpi.melt(
-        id_vars=["Pillar", "Indicator"],
-        value_vars=["Actual", "Goal"],
-        var_name="Type",
-        value_name="Count"
-    )
-    fig = px.bar(
-        dfm,
-        x="Indicator",
-        y="Count",
-        color="Type",
-        barmode="group",
-        facet_col="Pillar",
-        height=400
-    )
-    st.plotly_chart(fig, use_container_width=True)
+            for ind in inds:
+                cols = st.columns([3,1,1])
+                with cols[0]:
+                    new_ind_name = st.text_input("Name", value=ind["name"], key=f"ind_nm_{ind['indicator_id']}")
+                    new_ind_goal = st.number_input("Goal", min_value=0, step=1, value=ind["goal"] or 0, key=f"ind_goal_{ind['indicator_id']}")
+                with cols[1]:
+                    if st.button("💾", key=f"save_ind_{ind['indicator_id']}"):
+                        now = datetime.utcnow().isoformat()
+                        c.execute(
+                            "UPDATE indicators SET name=?,goal=?,updated_at=? WHERE indicator_id=?",
+                            (new_ind_name, new_ind_goal, now, ind["indicator_id"])
+                        )
+                        conn.commit()
+                        st.success("Saved.")
+                        st.experimental_rerun()
+                with cols[2]:
+                    if st.button("🗑️", key=f"del_ind_{ind['indicator_id']}"):
+                        c.execute("DELETE FROM indicators WHERE indicator_id=?", (ind["indicator_id"],))
+                        conn.commit()
+                        st.success("Deleted.")
+                        st.experimental_rerun()
 
-
-def plot_trends(df_act: pd.DataFrame, date_range):
-    if df_act.empty:
-        st.info("No activity data.")
-        return
-    df = df_act.dropna(subset=["Date", "Indicator"]).copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df[(df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])]
-    df["Month"] = df["Date"].dt.to_period("M").dt.to_timestamp()
-    monthly = df.groupby(["Month", "Indicator"]).size().reset_index(name="Count")
-    fig = px.line(monthly, x="Month", y="Count", color="Indicator", markers=True)
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def plot_program_distribution(df_act: pd.DataFrame):
-    if df_act.empty:
-        st.info("No activity data.")
-        return
-    dist = df_act.dropna(subset=["Program"]).groupby("Program").size().reset_index(name="Count")
-    fig = px.pie(dist, names="Program", values="Count", hole=0.4)
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def plot_social_media(df_sm: pd.DataFrame, date_range):
-    if df_sm.empty:
-        st.info("No social media data.")
-        return
-    df = df_sm.copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df[(df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])]
-    fig = px.line(
-        df.sort_values("Date"),
-        x="Date",
-        y=["Posts", "Reach"],
-        labels={"value": "Count", "variable": ""},
-        markers=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def plot_grants_funnel(df_gr: pd.DataFrame, date_range):
-    if df_gr.empty:
-        st.info("No grants data.")
-        return
-    df = df_gr.dropna(subset=["Date", "Status"]).copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df[(df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])]
-    df["Quarter"] = df["Date"].dt.to_period("Q").dt.to_timestamp()
-    summary = df.groupby(["Quarter", "Status"]).size().reset_index(name="Count")
-    fig = px.bar(summary, x="Quarter", y="Count", color="Status", barmode="group")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def generate_pdf(html: str) -> bytes:
-    return pdfkit.from_string(html, False)
-
+# ── Main ─────────────────────────────────────────────────────────────────
 
 def main():
-    st.sidebar.header("Settings")
-    template_bytes = make_excel_template()
-    st.sidebar.download_button(
-        "Download Excel Template",
-        data=template_bytes,
-        file_name="pillars_template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    uploaded = st.sidebar.file_uploader("Upload Pillars Excel", type=["xlsx"])
-    date_range = st.sidebar.date_input(
-        "Date Range",
-        value=(datetime(datetime.now().year, 1, 1), datetime(datetime.now().year, 12, 31))
-    )
-    prog_filter = st.sidebar.multiselect(
-        "Program Filter",
-        ["Conflict Medicine", "Epidemic & Pandemic", "Refugee Health", "e-sahha", "Climate Health"]
-    )
+    st.set_page_config(page_title="Pillars Tracker", layout="wide")
+    init_db()
 
-    if not uploaded:
-        st.info("Upload your Excel to proceed.")
-        return
+    st.sidebar.title("Navigation")
+    choice = st.sidebar.radio("Go to", ["Pillars & Indicators"])
 
-    dfs = load_sheets(uploaded)
-    df_kpi = compute_kpis(dfs["Pillars Structure"])
-    df_act = dfs["Activities"]
-    df_sm = dfs["Social Media"]
-    df_gr = dfs["Grants"]
-
-    st.title("Pillars Dashboard")
-    st.subheader("KPIs")
-    make_cards(df_kpi)
-    st.subheader("Progress vs Goals")
-    plot_pillar_progress(df_kpi)
-    st.subheader("Trends Over Time")
-    plot_trends(df_act, date_range)
-    st.subheader("Program Distribution")
-    plot_program_distribution(df_act)
-    st.subheader("Social Media")
-    plot_social_media(df_sm, date_range)
-    st.subheader("Grants Funnel")
-    plot_grants_funnel(df_gr, date_range)
-    st.subheader("Activity Log")
-    if not df_act.empty:
-        df_act["Date"] = pd.to_datetime(df_act["Date"])
-        if prog_filter:
-            df_act = df_act[df_act["Program"].isin(prog_filter)]
-        st.dataframe(df_act)
-    else:
-        st.info("No activities to display.")
-
-    st.markdown("---")
-    st.subheader("Download PDF Report")
-    if st.button("Generate PDF"):
-        html = f"<h1>Pillars Report</h1><p>Generated: {datetime.now():%Y-%m-%d %H:%M}</p>{df_kpi.to_html(index=False)}"
-        try:
-            pdf_bytes = generate_pdf(html)
-            st.download_button("Download PDF", data=pdf_bytes, file_name="pillars_report.pdf", mime="application/pdf")
-        except Exception as e:
-            st.error(f"PDF export failed: {e}")
-
+    if choice == "Pillars & Indicators":
+        manage_pillars_and_indicators()
 
 if __name__ == "__main__":
     main()
