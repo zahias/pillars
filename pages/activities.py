@@ -50,15 +50,19 @@ def activities_page():
     # Step 3: For each activity → manage fields & entries
     for act in c.execute("SELECT * FROM activities WHERE indicator_id=? ORDER BY name", (iid,)).fetchall():
         with st.expander(act["name"]):
+
             # Rename / delete activity
             col1, col2 = st.columns([3,1])
             with col1:
-                upd_act = st.text_input("Name", value=act["name"], key=f"act_nm_{act['activity_id']}")
+                upd_act = st.text_input(
+                    "Name", value=act["name"], key=f"act_nm_{act['activity_id']}"
+                )
             with col2:
                 if st.button("🗑️ Delete activity", key=f"del_act_{act['activity_id']}"):
                     # cascade-delete
                     c.execute(
-                        "DELETE FROM detail_values WHERE entry_id IN (SELECT entry_id FROM detail_entries WHERE activity_id=?)",
+                        "DELETE FROM detail_values WHERE entry_id IN "
+                        "(SELECT entry_id FROM detail_entries WHERE activity_id=?)",
                         (act["activity_id"],)
                     )
                     c.execute("DELETE FROM detail_entries WHERE activity_id=?", (act["activity_id"],))
@@ -77,7 +81,7 @@ def activities_page():
                 st.success("Activity renamed.")
                 st.rerun()
 
-            # Manage detail-fields schema
+            # ── Manage detail-fields schema for this activity ─────────────
             st.markdown("#### 🛠 Manage detail fields")
             for fld in c.execute(
                 "SELECT * FROM detail_fields WHERE activity_id=? ORDER BY order_index, field_id",
@@ -85,10 +89,13 @@ def activities_page():
             ).fetchall():
                 fcol1, fcol2, fcol3, fcol4 = st.columns([4,2,1,1])
                 with fcol1:
-                    new_name = st.text_input("Field name", value=fld["name"], key=f"fld_nm_{fld['field_id']}")
+                    new_name = st.text_input(
+                        "Field name", value=fld["name"], key=f"fld_nm_{fld['field_id']}"
+                    )
                 with fcol2:
                     new_type = st.selectbox(
-                        "Type", ["Text","Number"],
+                        "Type",
+                        ["Text","Number"],
                         index=0 if fld["field_type"]=="Text" else 1,
                         key=f"fld_tp_{fld['field_id']}"
                     )
@@ -113,23 +120,36 @@ def activities_page():
                     st.success("Field updated.")
                     st.rerun()
 
-            with st.expander("➕ Add new detail field", expanded=False):
-                nf_name = st.text_input("Field name", key=f"new_fld_nm_{act['activity_id']}")
-                nf_type = st.selectbox("Type", ["Text","Number"], key=f"new_fld_tp_{act['activity_id']}")
-                nf_order = st.number_input("Order", min_value=0, step=1, key=f"new_fld_ord_{act['activity_id']}")
+            # ── Add new detail-field via checkbox toggle ────────────────
+            add_field = st.checkbox(
+                "➕ Add new detail field",
+                key=f"add_fld_chk_{act['activity_id']}"
+            )
+            if add_field:
+                nf_name = st.text_input(
+                    "Field name", key=f"new_fld_nm_{act['activity_id']}"
+                )
+                nf_type = st.selectbox(
+                    "Type", ["Text","Number"], key=f"new_fld_tp_{act['activity_id']}"
+                )
+                nf_order = st.number_input(
+                    "Order", min_value=0, step=1, key=f"new_fld_ord_{act['activity_id']}"
+                )
                 if st.button("Add field", key=f"add_fld_{act['activity_id']}"):
                     c.execute(
-                        "INSERT INTO detail_fields (activity_id,name,field_type,order_index) VALUES (?,?,?,?)",
+                        "INSERT INTO detail_fields "
+                        "(activity_id,name,field_type,order_index) VALUES (?,?,?,?)",
                         (act["activity_id"], nf_name, nf_type, nf_order)
                     )
                     conn.commit()
                     st.success("Field added.")
                     st.rerun()
 
-            # Add detail entry using dynamic fields
+            # ── Add detail entry with dynamic fields ─────────────────────
             st.markdown("#### ➕ Add detail entry")
             schema = c.execute(
-                "SELECT field_id,name,field_type FROM detail_fields WHERE activity_id=? ORDER BY order_index, field_id",
+                "SELECT field_id,name,field_type FROM detail_fields "
+                "WHERE activity_id=? ORDER BY order_index, field_id",
                 (act["activity_id"],)
             ).fetchall()
             entry_values = {}
@@ -143,29 +163,33 @@ def activities_page():
             if st.button("Save detail", key=f"save_det_{act['activity_id']}"):
                 now = datetime.utcnow().isoformat()
                 c.execute(
-                    "INSERT INTO detail_entries (activity_id,program_id,created_at) VALUES (?,?,?)",
+                    "INSERT INTO detail_entries (activity_id,program_id,created_at) "
+                    "VALUES (?,?,?)",
                     (act["activity_id"], pid, now)
                 )
                 entry_id = c.lastrowid
                 for fid, val in entry_values.items():
                     if isinstance(val, (int, float)):
                         c.execute(
-                            "INSERT INTO detail_values (entry_id,field_id,value_number) VALUES (?,?,?)",
+                            "INSERT INTO detail_values (entry_id,field_id,value_number) "
+                            "VALUES (?,?,?)",
                             (entry_id, fid, val)
                         )
                     else:
                         c.execute(
-                            "INSERT INTO detail_values (entry_id,field_id,value_text) VALUES (?,?,?)",
+                            "INSERT INTO detail_values (entry_id,field_id,value_text) "
+                            "VALUES (?,?,?)",
                             (entry_id, fid, val)
                         )
                 conn.commit()
                 st.success("Detail entry saved.")
                 st.rerun()
 
-            # List existing entries
+            # ── List & delete existing detail entries ─────────────────────
             st.markdown("**Existing detail entries**")
             for en in c.execute(
-                "SELECT entry_id,created_at FROM detail_entries WHERE activity_id=? ORDER BY entry_id DESC",
+                "SELECT entry_id,created_at FROM detail_entries "
+                "WHERE activity_id=? ORDER BY entry_id DESC",
                 (act["activity_id"],)
             ).fetchall():
                 st.markdown(f"**Entry #{en['entry_id']}** (created: {en['created_at']})")
