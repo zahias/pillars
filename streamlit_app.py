@@ -1,12 +1,12 @@
 import streamlit as st
 from db import init_db
-from pages.parameters         import parameters_page
-from pages.programs           import programs_page
-from pages.pillars_indicators import pillars_indicators_page
-from pages.activities         import activities_page
-from pages.data_entry         import data_entry_page
+from app_pages.parameters         import parameters_page
+from app_pages.programs           import programs_page
+from app_pages.pillars_indicators import pillars_indicators_page
+from app_pages.activities         import activities_page
+from app_pages.data_entry         import data_entry_page
 
-# ── Must be the first Streamlit command ────────────────────────────────────
+# ── Must be first ──────────────────────────────────────────────────────────
 st.set_page_config(page_title="Pillars Tracker", layout="wide")
 
 def main():
@@ -33,11 +33,8 @@ def main():
 
     else:  # Researcher
         st.sidebar.subheader("Researcher Menu")
-        choice = st.sidebar.radio("Go to", [
-            "Data Entry"
-        ])
-        if choice == "Data Entry":
-            data_entry_page()
+        _ = st.sidebar.radio("Go to", ["Data Entry"])
+        data_entry_page()
 
 if __name__ == "__main__":
     main()
