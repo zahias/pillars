@@ -9,6 +9,5 @@ def export_to_excel(df_dict: dict):
     with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
         for sheet, df in df_dict.items():
             df.to_excel(writer, sheet_name=sheet, index=False)
-    writer.save()
     out.seek(0)
     return out

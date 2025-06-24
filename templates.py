@@ -9,7 +9,6 @@ def make_config_template() -> BytesIO:
         cfg["programs"].to_excel(writer, sheet_name="Programs", index=False)
         cfg["pillars"].to_excel(writer, sheet_name="Pillars", index=False)
         cfg["indicators"].to_excel(writer, sheet_name="Indicators", index=False)
-    writer.save()
     out.seek(0)
     return out
 
@@ -29,6 +28,5 @@ def make_data_template() -> BytesIO:
             "title": ""
         }])
         df_act.to_excel(writer, sheet_name="Activities", index=False)
-    writer.save()
     out.seek(0)
     return out
